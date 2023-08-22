@@ -1,4 +1,4 @@
-import os, logging
+import os, logging, time
 import functools
 
 import imlib as im
@@ -250,6 +250,7 @@ py.mkdir(sample_dir)
 # main loop
 with train_summary_writer.as_default():
     for ep in tqdm.trange(args.epochs, desc='Epoch Loop'):
+        start_time = time.time()
         if ep < ep_cnt:
             continue
 
@@ -267,6 +268,9 @@ with train_summary_writer.as_default():
 
             # sample
             if G_optimizer.iterations.numpy() % 100 == 0:
+                logger.info("Iteration-{:,d} ({:.2f} sec)".format(G_optimizer.iterations.numpy(), time.time() - start_time))
+                start_time = time.time()
+                
                 A, B = next(test_iter)
                 A2B, B2A, A2B2A, B2A2B = sample(A, B)
                 img = im.immerge(np.concatenate([A, A2B, A2B2A, B, B2A, B2A2B], axis=0), n_rows=2)
