@@ -1,5 +1,4 @@
-import os
-os.environ['CUDA_VISIBLE_DEVICES'] = "0"
+import os, logging
 import functools
 
 import imlib as im
@@ -7,17 +6,17 @@ import numpy as np
 import pylib as py
 import tensorflow as tf
 import tensorflow.keras as keras
+from tensorflow.keras.applications.vgg16 import VGG16
 import tf2lib as tl
 import tf2gan as gan
 import tqdm, pdb
 
 import data
 import module
+from my_logger import MyLogger
 
-# ==============================================================================
-# =                                   param                                    =
-# ==============================================================================
-
+py.arg('--gpu_index', default='0', required=True)
+py.arg('--prefix', default='loss_dc2anet')
 py.arg('--dataset', default='NECT2T2')
 py.arg('--datasets_dir', default='datasets')
 py.arg('--load_size', type=int, default=286*2)  # load image to this size
@@ -32,17 +31,44 @@ py.arg('--gradient_penalty_mode', default='none', choices=['none', 'dragan', 'wg
 py.arg('--gradient_penalty_weight', type=float, default=10.0)
 py.arg('--cycle_loss_weight', type=float, default=10.0)
 py.arg('--identity_loss_weight', type=float, default=0.0)
+py.arg('--gradient_loss_weight', type=float, default=15.0)
+py.arg('--ssim_loss_weight', type=float, default=0.05)
+py.arg('--voxel_loss_weight', type=float, default=100.0)
 py.arg('--pool_size', type=int, default=50)  # pool size to store fake samples
 args = py.args()
 
+os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu_index
+
 # output_dir
-output_dir = py.join('output', args.dataset)
+if args.prefix != "":
+    output_dir = py.join('output', args.prefix, args.dataset)
+else:
+    output_dir = py.join('output', args.dataset)
+    
 py.mkdir(output_dir)
 
 # save settings
 py.args_to_yaml(py.join(output_dir, 'settings.yml'), args)
 
+# ==============================================================================
+# =                                    log                                    =
+# ==============================================================================
 
+my_logger = MyLogger()
+logger = my_logger.logger
+
+logger.info("[Argument Information]")
+logger.info("Current folder path: {}".format(os.path.abspath(os.getcwd())))
+for k, v in args.__dict__.items():
+    logger.info("{}: {}".format(k, v))
+
+
+def parse_loss_dict(loss_dict):
+    for k, v in loss_dict.items():
+        if v.shape == tf.shape([1]):
+            v = tf.squeeze(v)
+        logger.info(f'{k}: {v.numpy():.5f}')
+        
 # ==============================================================================
 # =                                    data                                    =
 # ==============================================================================
@@ -63,6 +89,8 @@ A_B_dataset_test, _ = data.make_zip_dataset(A_img_paths_test, B_img_paths_test, 
 # =                                   models                                   =
 # ==============================================================================
 
+vgg_model = VGG16(include_top=False, input_shape=(args.crop_size, args.crop_size, 3))
+
 G_A2B = module.ResnetGenerator(input_shape=(args.crop_size, args.crop_size, 1))
 G_B2A = module.ResnetGenerator(input_shape=(args.crop_size, args.crop_size, 1))
 
@@ -72,6 +100,10 @@ D_B = module.ConvDiscriminator(input_shape=(args.crop_size, args.crop_size, 1))
 d_loss_fn, g_loss_fn = gan.get_adversarial_losses_fn(args.adversarial_loss_mode)
 cycle_loss_fn = tf.losses.MeanAbsoluteError()
 identity_loss_fn = tf.losses.MeanAbsoluteError()
+voxel_loss_fn = tf.losses.MeanAbsoluteError()
+content_loss = gan.content_loss
+gradient_loss = gan.gradient_difference_loss
+ssim_loss = gan.ssim_loss_fn
 
 G_lr_scheduler = module.LinearDecay(args.lr, args.epochs * len_dataset, args.epoch_decay * len_dataset)
 D_lr_scheduler = module.LinearDecay(args.lr, args.epochs * len_dataset, args.epoch_decay * len_dataset)
@@ -96,14 +128,38 @@ def train_G(A, B):
         A2B_d_logits = D_B(A2B, training=True)
         B2A_d_logits = D_A(B2A, training=True)
 
+        # Adversarial Loss
         A2B_g_loss = g_loss_fn(A2B_d_logits)
         B2A_g_loss = g_loss_fn(B2A_d_logits)
+        
+        # Gradient Loss
+        A2B_gradient_loss = gradient_loss(B, A2B)
+        B2A_gradient_loss = gradient_loss(A, B2A)
+        
+        # Content Loss
+        A2B_content_loss = content_loss(B, A2B, vgg_model)
+        B2A_content_loss = content_loss(A, B2A, vgg_model)
+        
+        # SSIM Loss
+        A2B_ssim_loss = ssim_loss(B, A2B)
+        B2A_ssim_loss = ssim_loss(A, B2A)
+        
+        # Voxel Loss
+        A2B_voxel_loss = voxel_loss_fn(B, A2B)
+        B2A_voxel_loss = voxel_loss_fn(A, B2A)
+        
+        # Cycle Loss
         A2B2A_cycle_loss = cycle_loss_fn(A, A2B2A)
         B2A2B_cycle_loss = cycle_loss_fn(B, B2A2B)
+        
+        # Identical Loss
         A2A_id_loss = identity_loss_fn(A, A2A)
         B2B_id_loss = identity_loss_fn(B, B2B)
 
-        G_loss = (A2B_g_loss + B2A_g_loss) + (A2B2A_cycle_loss + B2A2B_cycle_loss) * args.cycle_loss_weight + (A2A_id_loss + B2B_id_loss) * args.identity_loss_weight
+        G_loss = (A2B_g_loss + B2A_g_loss) + (A2B2A_cycle_loss + B2A2B_cycle_loss) * args.cycle_loss_weight +\
+                 (A2A_id_loss + B2B_id_loss) * args.identity_loss_weight + (A2B_gradient_loss + B2A_gradient_loss) * args.gradient_loss_weight +\
+                 (A2B_content_loss + B2A_content_loss) + (A2B_ssim_loss + B2A_ssim_loss) * args.ssim_loss_weight +\
+                 (A2B_voxel_loss + B2A_voxel_loss) * args.voxel_loss_weight
 
     G_grad = t.gradient(G_loss, G_A2B.trainable_variables + G_B2A.trainable_variables)
     G_optimizer.apply_gradients(zip(G_grad, G_A2B.trainable_variables + G_B2A.trainable_variables))
@@ -219,8 +275,8 @@ with train_summary_writer.as_default():
                     img = im.gray2rgb(img)
                 
                 im.imwrite(img, py.join(sample_dir, 'iter-%09d.jpg' % G_optimizer.iterations.numpy()))
-                tl.parse_loss_dict(G_loss_dict)
-                tl.parse_loss_dict(D_loss_dict)
+                parse_loss_dict(G_loss_dict)
+                parse_loss_dict(D_loss_dict)
 
         # save checkpoint
         checkpoint.save(ep)

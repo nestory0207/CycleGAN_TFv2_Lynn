@@ -63,3 +63,5 @@ def summary(name_data_dict,
     with tf.name_scope(name):
         for name, data in name_data_dict.items():
             _summary(name, data)
+            
+

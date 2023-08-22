@@ -1,4 +1,7 @@
+import os, logging
 import tensorflow as tf
+
+logger = logging.getLogger("CycleGAN")
 
 
 @tf.function
@@ -17,8 +20,8 @@ def reshape(x, shape):
     shape = [tf.shape(x)[i] if shape[i] is None else shape[i] for i in range(len(shape))]
     return tf.reshape(x, shape)
 
-def parse_loss_dict(loss_dict):
-    for k, v in loss_dict.items():
-        if v.shape == tf.shape([1]):
-            v = tf.squeeze(v)
-        print(f'{k}: {v.numpy():.5f}')
+
+def make_dir(dir_path):    
+    if not os.path.exists(dir_path):
+        os.makedirs(dir_path, exist_ok=True)
+        logger.info("make directory, path: {}".format(dir_path))

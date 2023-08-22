@@ -1,5 +1,24 @@
 import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras.applications.vgg16 import VGG16
+import logging
 
+logger = logging.getLogger("CycleGAN")
+
+MAE = keras.losses.MeanAbsoluteError()
+MSE = keras.losses.MeanSquaredError()
+
+WEIGHT_GD = 150
+WEIGHT_CYCLE = 10
+WEIGHT_L1_LAMBDA = 100
+WEIGHT_SSIM = 0.05
+
+def weight_info():
+    logger.info("WEIGHT Gradient Difference: {}".format(WEIGHT_GD))
+    logger.info("WEIGHT Cycle: {}".format(WEIGHT_CYCLE))
+    logger.info("WEIGHT L1 Lambda: {}".format(WEIGHT_L1_LAMBDA))
+    logger.info("WEIGHT SSIM: {}".format(WEIGHT_SSIM))
+    
 
 def get_gan_losses_fn():
     bce = tf.losses.BinaryCrossentropy(from_logits=True)
@@ -113,3 +132,36 @@ def gradient_penalty(f, real, fake, mode):
         gp = _gradient_penalty(f, real, fake)
 
     return gp
+
+
+###############################################################################
+###########                     dc2anet loss                        ###########
+###############################################################################
+
+def ssim_loss_fn(y, y_pred):
+    ssim_loss = tf.constant(0., dtype=tf.float32)
+    preds = (y_pred + 1.) / 2.
+    gts = (y + 1.) / 2.
+    ssim_positive = tf.math.maximum(
+        0., tf.image.ssim(preds, gts, max_val=1.0))
+    ssim_loss = -tf.math.log(ssim_positive)
+    ssim_loss = tf.reduce_mean(ssim_loss)
+    return ssim_loss
+
+
+def gradient_difference_loss(y, y_pred):
+    preds_dy, preds_dx = tf.image.image_gradients(y_pred)
+    y_dy, y_dx = tf.image.image_gradients(y)
+    gd_loss = (MAE(tf.abs(preds_dy), tf.abs(y_dy)) + MAE(tf.abs(preds_dx), tf.abs(y_dx)))
+    return gd_loss
+
+
+def content_loss(y, y_pred, model):
+    y_concat = tf.concat([y, y, y], axis=3)
+    y_pred_concat = tf.concat([y_pred, y_pred, y_pred], axis=3)
+
+    real_features = model(y_concat)
+    pred_features = model(y_pred_concat)
+
+    content_loss = MAE(real_features, pred_features)
+    return content_loss
