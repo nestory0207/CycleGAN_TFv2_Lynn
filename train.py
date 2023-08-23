@@ -1,4 +1,4 @@
-import os, logging, time
+import os, logging, time, datetime
 import functools
 
 import imlib as im
@@ -30,20 +30,23 @@ py.arg('--adversarial_loss_mode', default='gan', choices=['gan', 'hinge_v1', 'hi
 py.arg('--gradient_penalty_mode', default='none', choices=['none', 'dragan', 'wgan-gp'])
 py.arg('--gradient_penalty_weight', type=float, default=10.0)
 py.arg('--cycle_loss_weight', type=float, default=10.0)
-py.arg('--identity_loss_weight', type=float, default=0.0)
-py.arg('--gradient_loss_weight', type=float, default=15.0)
+py.arg('--identity_loss_weight', type=float, default=1.0)
+py.arg('--gradient_loss_weight', type=float, default=10.0)
 py.arg('--ssim_loss_weight', type=float, default=0.05)
-py.arg('--voxel_loss_weight', type=float, default=100.0)
+py.arg('--voxel_loss_weight', type=float, default=1.0)
 py.arg('--pool_size', type=int, default=50)  # pool size to store fake samples
 args = py.args()
 
 os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu_index
 
+currentTime = datetime.datetime.now()
+currentTime = currentTime.strftime("%Y_%m%d_%H%M")
+        
 # output_dir
 if args.prefix != "":
-    output_dir = py.join('output', args.prefix, args.dataset)
+    output_dir = py.join('output', args.prefix, args.dataset, currentTime)
 else:
-    output_dir = py.join('output', args.dataset)
+    output_dir = py.join('output', args.dataset, currentTime)
     
 py.mkdir(output_dir)
 
@@ -54,7 +57,7 @@ py.args_to_yaml(py.join(output_dir, 'settings.yml'), args)
 # =                                    log                                    =
 # ==============================================================================
 
-my_logger = MyLogger()
+my_logger = MyLogger(log_dir_path=output_dir)
 logger = my_logger.logger
 
 logger.info("[Argument Information]")
@@ -132,21 +135,21 @@ def train_G(A, B):
         A2B_g_loss = g_loss_fn(A2B_d_logits)
         B2A_g_loss = g_loss_fn(B2A_d_logits)
         
-        # Gradient Loss
-        A2B_gradient_loss = gradient_loss(B, A2B)
-        B2A_gradient_loss = gradient_loss(A, B2A)
+        # # Gradient Loss
+        # A2B_gradient_loss = gradient_loss(B, A2B)
+        # B2A_gradient_loss = gradient_loss(A, B2A)
         
-        # Content Loss
-        A2B_content_loss = content_loss(B, A2B, vgg_model)
-        B2A_content_loss = content_loss(A, B2A, vgg_model)
+        # # Content Loss
+        # A2B_content_loss = content_loss(B, A2B, vgg_model)
+        # B2A_content_loss = content_loss(A, B2A, vgg_model)
         
-        # SSIM Loss
-        A2B_ssim_loss = ssim_loss(B, A2B)
-        B2A_ssim_loss = ssim_loss(A, B2A)
+        # # SSIM Loss
+        # A2B_ssim_loss = ssim_loss(B, A2B)
+        # B2A_ssim_loss = ssim_loss(A, B2A)
         
         # Voxel Loss
-        A2B_voxel_loss = voxel_loss_fn(B, A2B)
-        B2A_voxel_loss = voxel_loss_fn(A, B2A)
+        # A2B_voxel_loss = voxel_loss_fn(B, A2B)
+        # B2A_voxel_loss = voxel_loss_fn(A, B2A)
         
         # Cycle Loss
         A2B2A_cycle_loss = cycle_loss_fn(A, A2B2A)
@@ -157,9 +160,11 @@ def train_G(A, B):
         B2B_id_loss = identity_loss_fn(B, B2B)
 
         G_loss = (A2B_g_loss + B2A_g_loss) + (A2B2A_cycle_loss + B2A2B_cycle_loss) * args.cycle_loss_weight +\
-                 (A2A_id_loss + B2B_id_loss) * args.identity_loss_weight + (A2B_gradient_loss + B2A_gradient_loss) * args.gradient_loss_weight +\
-                 (A2B_content_loss + B2A_content_loss) + (A2B_ssim_loss + B2A_ssim_loss) * args.ssim_loss_weight +\
-                 (A2B_voxel_loss + B2A_voxel_loss) * args.voxel_loss_weight
+                 (A2A_id_loss + B2B_id_loss) * args.identity_loss_weight
+                #  (A2B_content_loss + B2A_content_loss) * args.cycle_loss_weight +\
+                #  (A2B_gradient_loss + B2A_gradient_loss) * args.gradient_loss_weight +\
+                #  (A2B_voxel_loss + B2A_voxel_loss) * args.voxel_loss_weight
+                #  (A2B_ssim_loss + B2A_ssim_loss) * args.ssim_loss_weight
 
     G_grad = t.gradient(G_loss, G_A2B.trainable_variables + G_B2A.trainable_variables)
     G_optimizer.apply_gradients(zip(G_grad, G_A2B.trainable_variables + G_B2A.trainable_variables))
@@ -169,7 +174,14 @@ def train_G(A, B):
                       'A2B2A_cycle_loss': A2B2A_cycle_loss,
                       'B2A2B_cycle_loss': B2A2B_cycle_loss,
                       'A2A_id_loss': A2A_id_loss,
-                      'B2B_id_loss': B2B_id_loss}
+                      'B2B_id_loss': B2B_id_loss,
+                    #   'A2B_gradient_loss':A2B_gradient_loss,
+                    #   'B2A_gradient_loss':B2A_gradient_loss,
+                    #   'A2B_content_loss':A2B_content_loss,
+                    #   'B2A_content_loss':B2A_content_loss,
+                    #   'A2B_voxel_loss':A2B_voxel_loss,
+                    #   'B2A_voxel_loss':B2A_voxel_loss,
+                      }
 
 
 @tf.function
@@ -243,7 +255,8 @@ except Exception as e:
 train_summary_writer = tf.summary.create_file_writer(py.join(output_dir, 'summaries', 'train'))
 
 # sample
-test_iter = iter(A_B_dataset_test)
+test_iter = next(iter(A_B_dataset_test))
+
 sample_dir = py.join(output_dir, 'samples_training')
 py.mkdir(sample_dir)
 
@@ -271,7 +284,7 @@ with train_summary_writer.as_default():
                 logger.info("Iteration-{:,d} ({:.2f} sec)".format(G_optimizer.iterations.numpy(), time.time() - start_time))
                 start_time = time.time()
                 
-                A, B = next(test_iter)
+                A, B = test_iter
                 A2B, B2A, A2B2A, B2A2B = sample(A, B)
                 img = im.immerge(np.concatenate([A, A2B, A2B2A, B, B2A, B2A2B], axis=0), n_rows=2)
                 if img.shape[-1] == 1:

@@ -9,9 +9,8 @@ dir_name = os.path.dirname(file_name)
 
 class MyLogger():
     logger_name = "CycleGAN"
-    def __init__(self, log_fname="CycleGAN.log", logger_name=logger_name):
-        self.current_time = datetime.now().strftime("%Y_%m%d_%H%M")
-        self.log_dir_path = os.path.join("./logs", self.current_time)
+    def __init__(self, log_dir_path, log_fname="CycleGAN.log", logger_name=logger_name):
+        self.log_dir_path = os.path.join(log_dir_path, "logs")
         make_dir(self.log_dir_path)
         self.log_path = os.path.join(self.log_dir_path, log_fname)
         self.logger = self.create_logger(logger_name)

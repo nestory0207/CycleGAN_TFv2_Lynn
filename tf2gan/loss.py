@@ -152,7 +152,10 @@ def ssim_loss_fn(y, y_pred):
 def gradient_difference_loss(y, y_pred):
     preds_dy, preds_dx = tf.image.image_gradients(y_pred)
     y_dy, y_dx = tf.image.image_gradients(y)
-    gd_loss = (MAE(tf.abs(preds_dy), tf.abs(y_dy)) + MAE(tf.abs(preds_dx), tf.abs(y_dx)))
+    preds_dy, preds_dx, y_dy, y_dx = tf.square(preds_dy), tf.square(preds_dx), tf.square(y_dy), tf.square(y_dx)
+    # gd_loss = (MAE(tf.abs(preds_dy), tf.abs(y_dy)) + MAE(tf.abs(preds_dx), tf.abs(y_dx)))
+    gd_loss = tf.reduce_mean(tf.abs(tf.abs(preds_dy) - tf.abs(y_dy)) +
+                             tf.abs(tf.abs(preds_dx) - tf.abs(y_dx)))
     return gd_loss
 
 
